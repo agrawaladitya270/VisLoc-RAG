@@ -1,4 +1,7 @@
 # Visual + Location Aware RAG
+   <p align="center">
+  <img src="https://github.com/user-attachments/assets/8ae21712-2b9a-475c-a548-0a1682540660" alt="Visual + Location Aware RAG" />
+</p>                                       
 
 This project implements a retrieval pipeline that combines image understanding and location context to improve information retrieval. It is designed to solve a common problem in visual search and retrieval-augmented generation (RAG): generic image recognition often produces ambiguous or incorrect results when the same object or landmark exists in multiple locations.
 

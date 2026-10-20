@@ -1,0 +1,14 @@
+[project]
+name = "visloc-rag"
+version = "0.2.0"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI uses File(...) as a default on purpose
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

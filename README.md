@@ -64,7 +64,8 @@ cp .env.example .env          # then put your Groq key in .env (free at console.
 uvicorn visrag.api:app --port 8000 --env-file .env
 ```
 
-Open <http://localhost:8000> for the interactive API docs (you can upload a photo there), or:
+Open <http://localhost:8000> for the web page: choose a photo, optionally add your location, and get
+the verified facts with links to their sources. API docs are at `/docs`. Or call the API directly:
 
 ```bash
 curl -F "file=@photo.jpg" -F "location=Kyoto" http://localhost:8000/facts
@@ -76,6 +77,7 @@ Response shape:
 {
   "subject": {"name": "...", "category": "landmark", "search_query": "...", "confidence": "high"},
   "facts":   [{"fact": "...", "sources": ["S1"], "supported": true}],
+  "facts_checked": 5,   // facts written before verification; "facts" holds only those that passed
   "sources": [{"id": "S1", "title": "... (en)", "url": "https://en.wikipedia.org/wiki/..."}],
   "timing":  {"identify_s": ..., "search_s": ..., "facts_s": ..., "check_s": ..., "total_s": ...}
 }
@@ -142,7 +144,8 @@ cover upload validation, the missing-key error, and that source text never leaks
 ```
 visrag/
   pipeline.py      identify → retrieve → generate → verify
-  api.py           FastAPI service: POST /facts, GET /health
+  api.py           FastAPI service: POST /facts, GET /health, web page at /
+  static/          the web page (plain HTML and JS, no build step)
 eval/
   run_eval.py      evaluation harness and human-label export
   landmarks.csv    58 labeled landmarks with aliases

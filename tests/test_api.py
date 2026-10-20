@@ -19,6 +19,12 @@ def test_health():
     assert client.get("/health").json()["status"] == "ok"
 
 
+def test_ui_page_is_served():
+    r = client.get("/")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert 'id="file"' in r.text
+
+
 def test_rejects_non_image():
     r = client.post("/facts", files={"file": ("x.jpg", b"not an image", "image/jpeg")})
     assert r.status_code == 400
@@ -47,5 +53,5 @@ def test_returns_only_supported_facts_without_source_text(monkeypatch):
     r = client.post("/facts", files={"file": ("x.jpg", _jpeg(), "image/jpeg")}, data={"location": "Himeji"})
     body = r.json()
     assert r.status_code == 200
-    assert body["facts"] == shown
+    assert body["facts"] == shown and body["facts_checked"] == 2
     assert body["sources"] == [{"id": "S1", "title": "Himeji Castle (en)", "url": "u"}]

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisLoc-RAG</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --text: #1a1a1a; --muted: #666; --line: #d4d4d4; --field: #fff; --btn: #f2f2f2; --err: #8b1a1a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161616; --text: #e4e4e4; --muted: #9a9a9a; --line: #3a3a3a; --field: #1f1f1f; --btn: #2a2a2a; --err: #e08a8a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+  .intro { margin: 0 0 24px; color: var(--muted); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+  .field { display: grid; grid-template-columns: 90px 1fr; gap: 6px 14px; align-items: start; margin-bottom: 14px; }
+  .field > label { padding-top: 5px; font-weight: 600; }
+  .note { color: var(--muted); font-size: 13px; }
+  input[type=text] { width: 100%; padding: 6px 8px; font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 2px; }
+  input[type=file] { font: inherit; color: var(--text); padding: 4px 0; }
+  #preview { display: block; max-width: 100%; max-height: 300px; margin-top: 8px; border: 1px solid var(--line); }
+  button { padding: 6px 16px; font: inherit; color: var(--text); background: var(--btn); border: 1px solid #8c8c8c; border-radius: 2px; cursor: pointer; }
+  button:disabled { color: var(--muted); border-color: var(--line); cursor: default; }
+  .status { margin: 10px 0 0; color: var(--muted); }
+  .error { margin: 10px 0 0; color: var(--err); }
+  h2 { margin: 0; font-size: 19px; font-weight: 600; }
+  h3 { margin: 22px 0 8px; font-size: 15px; font-weight: 600; }
+  .meta { margin: 2px 0 12px; color: var(--muted); }
+  ol { margin: 0; padding-left: 22px; }
+  ol li { margin-bottom: 8px; }
+  a { color: inherit; }
+  .cite { font-size: 13px; white-space: nowrap; }
+  .sources { list-style: none; padding: 0; font-size: 14px; }
+  .sources li { margin-bottom: 4px; }
+  .sources .id { display: inline-block; min-width: 34px; color: var(--muted); }
+  .timing { margin-top: 18px; color: var(--muted); font-size: 13px; }
+  footer { color: var(--muted); font-size: 13px; }
+  @media (max-width: 520px) { .field { grid-template-columns: 1fr; } .field > label { padding-top: 0; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>VisLoc-RAG</h1>
+  <p class="intro">Upload a photo of a landmark, building, dish or object. The app identifies it, writes facts from
+    English and Japanese Wikipedia, and checks each fact against the source it cites. Facts that fail the check are not shown.</p>
+
+  <form id="form">
+    <div class="field">
+      <label for="file">Photo</label>
+      <div>
+        <input type="file" id="file" accept="image/*">
+        <div class="note">JPEG, PNG or WebP, up to 8 MB. You can also drop a file on this page.</div>
+        <img id="preview" alt="Selected photo" hidden>
+      </div>
+    </div>
+    <div class="field">
+      <label for="location">Location</label>
+      <div>
+        <input type="text" id="location" placeholder="e.g. Kyoto" autocomplete="off">
+        <div class="note">Optional. Where you are; used as a hint.</div>
+      </div>
+    </div>
+    <div class="field">
+      <span></span>
+      <div>
+        <button id="submit" disabled>Get facts</button>
+        <p class="status" id="status" hidden>Working: identifying the photo, searching Wikipedia, writing and checking facts…</p>
+        <p class="error" id="error" role="alert" hidden></p>
+      </div>
+    </div>
+  </form>
+
+  <section id="result" hidden aria-live="polite">
+    <hr>
+    <h2 id="name"></h2>
+    <p class="meta" id="meta"></p>
+    <ol id="facts"></ol>
+    <p id="empty" hidden>No facts could be verified from the sources found.</p>
+    <h3>Sources</h3>
+    <ul class="sources" id="sources"></ul>
+    <p class="timing" id="timing"></p>
+  </section>
+
+  <hr>
+  <footer><a href="/docs">API docs</a> · <a href="https://github.com/agrawaladitya270/VisLoc-RAG" target="_blank" rel="noopener">Source code</a></footer>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const MAX_BYTES = 8 * 1024 * 1024;
+  const STAGES = { identify_s: "identify", search_s: "retrieve", facts_s: "write", check_s: "verify", total_s: "total" };
+  let file = null;
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;   // model and Wikipedia text is never parsed as HTML
+    return n;
+  }
+
+  function link(url, text, cls) {
+    const a = el("a", cls, text);
+    if (/^https:\/\//.test(url || "")) { a.href = url; a.target = "_blank"; a.rel = "noopener"; }
+    return a;
+  }
+
+  function showError(msg) { $("error").textContent = msg; $("error").hidden = !msg; }
+
+  function setFile(f) {
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return showError("Please choose an image file.");
+    if (f.size > MAX_BYTES) return showError("The image is larger than 8 MB.");
+    file = f;
+    showError("");
+    $("preview").src = URL.createObjectURL(f);
+    $("preview").hidden = false;
+    $("submit").disabled = false;
+  }
+
+  $("file").addEventListener("change", () => setFile($("file").files[0]));
+  document.addEventListener("dragover", (ev) => ev.preventDefault());
+  document.addEventListener("drop", (ev) => { ev.preventDefault(); setFile(ev.dataTransfer.files[0]); });
+
+  $("form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    body.append("location", $("location").value.trim());
+    $("submit").disabled = true;
+    $("status").hidden = false;
+    $("result").hidden = true;
+    showError("");
+    try {
+      const r = await fetch("/facts", { method: "POST", body });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Request failed (HTTP ${r.status}).`);
+      render(data);
+    } catch (e) {
+      showError(e.message || "Something went wrong.");
+    } finally {
+      $("submit").disabled = false;
+      $("status").hidden = true;
+    }
+  });
+
+  function render(d) {
+    const s = d.subject || {};
+    const facts = d.facts || [];
+    const sources = d.sources || [];
+    const byId = Object.fromEntries(sources.map((x) => [x.id, x]));
+
+    $("name").textContent = s.name || "Unknown subject";
+    const meta = [s.category, s.confidence && `${s.confidence} confidence`].filter(Boolean);
+    if (d.facts_checked) meta.push(`${facts.length} of ${d.facts_checked} facts passed the source check`);
+    $("meta").textContent = meta.join(" · ");
+
+    $("facts").replaceChildren(...facts.map((f) => {
+      const li = el("li", null, f.fact);
+      for (const id of f.sources || []) {
+        if (byId[id]) li.append(" ", link(byId[id].url, `[${id}]`, "cite"));
+      }
+      return li;
+    }));
+    $("facts").hidden = !facts.length;
+    $("empty").hidden = facts.length > 0;
+
+    $("sources").replaceChildren(...sources.map((x) => {
+      const li = el("li");
+      li.append(el("span", "id", x.id), link(x.url, x.title));
+      return li;
+    }));
+
+    const t = d.timing || {};
+    const parts = Object.entries(STAGES).filter(([k]) => typeof t[k] === "number").map(([k, label]) => `${label} ${t[k].toFixed(1)} s`);
+    $("timing").textContent = parts.length ? `Time: ${parts.join(", ")}` : "";
+
+    $("result").hidden = false;
+  }
+</script>
+</body>
+</html>

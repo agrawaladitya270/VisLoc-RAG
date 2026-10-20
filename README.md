@@ -13,8 +13,13 @@ retrieves evidence from **English and Japanese Wikipedia**, writes up to five fa
 sources**, and then **verifies each fact** against the sources it cites. Only verified facts are returned,
 each with a link to where it came from.
 
-**Stack:** Python · Groq (Llama 4 Scout vision, Llama 3.3 70B) · Wikipedia API · FastAPI · Docker ·
-GitHub Actions · pytest · ruff
+![VisLoc-RAG result for a photo of Tokyo Skytree](docs/screenshot.png)
+
+*Real output for a photo of Tokyo Skytree (the photo itself is not shown). Each `[S#]` links to the
+Wikipedia article that supports the fact.*
+
+**Stack:** Python · Groq (Qwen3.8 27B for vision and checking, GPT-OSS 120B for writing) · Wikipedia API ·
+FastAPI · Docker · GitHub Actions · pytest · ruff
 
 ## How it works
 
@@ -35,7 +40,8 @@ flowchart LR
 3. **Generate:** a text model writes up to 5 specific facts using *only* those sources. Each fact lists
    the source ids that support it. If the sources are about something else, it returns no facts.
 4. **Verify:** a separate call per fact asks whether the claim is supported by the sources it cites.
-   A fact with no valid citation fails automatically. Only supported facts are shown.
+   The checker is a different model family from the writer, so the two are less likely to make the
+   same mistake. A fact with no valid citation fails automatically. Only supported facts are shown.
 
 ## Design decisions
 
@@ -103,8 +109,9 @@ docker run --env-file .env -p 8000:8000 visloc-rag
 | Environment variable | Default | Purpose |
 |---|---|---|
 | `GROQ_API_KEY` | (required) | Groq API key |
-| `VISRAG_VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | identification model |
-| `VISRAG_TEXT_MODEL` | `llama-3.3-70b-versatile` | fact writing and verification model |
+| `VISRAG_VISION_MODEL` | `qwen/qwen3.8-27b` | identifies the photo |
+| `VISRAG_TEXT_MODEL` | `openai/gpt-oss-120b` | writes the cited facts |
+| `VISRAG_CHECK_MODEL` | `qwen/qwen3.8-27b` | checks each fact against its sources |
 
 ## Evaluation
 
@@ -156,9 +163,9 @@ Dockerfile         multi-stage, non-root image
 
 ## Limitations and next steps
 
-- **The verifier is an LLM too.** It can be wrong in the same ways as the generator, which is why the
-  evaluation measures its agreement with human labels. Next step: compare against an NLI model as the
-  verifier.
+- **The verifier is an LLM too.** It uses a different model family from the writer to reduce shared
+  mistakes, but it can still be wrong, which is why the evaluation measures its agreement with human
+  labels. Next step: compare against an NLI model as the verifier.
 - **Japanese search uses the English query**, so it sometimes returns related but off-target articles.
   Next step: follow the English article's language link to its Japanese counterpart.
 - **Wikipedia lead images are well-known photos**, which makes the benchmark easier than real phone

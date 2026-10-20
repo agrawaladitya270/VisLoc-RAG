@@ -5,3 +5,4 @@ results/
 .ruff_cache/
 .venv/
 venv/
+.vscode/

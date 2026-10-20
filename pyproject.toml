@@ -1,6 +1,6 @@
 [project]
 name = "visloc-rag"
-version = "0.2.0"
+version = "0.3.0"
 description = "Photo in, cited and fact-checked facts out: vision LLM + English/Japanese Wikipedia RAG with per-claim verification."
 readme = "README.md"
 license = "MIT"

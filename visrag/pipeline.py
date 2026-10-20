@@ -19,11 +19,13 @@ import time
 import requests
 from PIL import Image, ImageOps
 
+from . import __version__
+
 VISION_MODEL = os.getenv("VISRAG_VISION_MODEL", "qwen/qwen3.8-27b")
 TEXT_MODEL = os.getenv("VISRAG_TEXT_MODEL", "openai/gpt-oss-120b")
 # The checker is a different model family from the writer, so they are less likely to share mistakes.
 CHECK_MODEL = os.getenv("VISRAG_CHECK_MODEL", "qwen/qwen3.8-27b")
-HEADERS = {"User-Agent": "visloc-rag/0.2 (https://github.com/agrawaladitya270/VisLoc-RAG)"}
+HEADERS = {"User-Agent": f"visloc-rag/{__version__} (https://github.com/agrawaladitya270/VisLoc-RAG)"}
 
 
 def get_client():

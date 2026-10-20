@@ -8,6 +8,10 @@
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ED)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/8ae21712-2b9a-475c-a548-0a1682540660" alt="Visual + Location Aware RAG" />
+</p>
+
 Take a photo of a landmark, building, dish or object. VisLoc-RAG identifies it with a vision LLM,
 retrieves evidence from **English and Japanese Wikipedia**, writes up to five facts that **cite their
 sources**, and then **verifies each fact** against the sources it cites. Only verified facts are returned,
@@ -25,7 +29,7 @@ FastAPI · Docker · GitHub Actions · pytest · ruff
 
 ```mermaid
 flowchart LR
-    A["Photo + optional<br/>location hint"] --> B["1 · Identify<br/>vision LLM"]
+    A["Photo + optional<br/>location or name"] --> B["1 · Identify<br/>vision LLM"]
     B --> C["2 · Retrieve<br/>Wikipedia en + ja<br/>numbered sources"]
     C --> D["3 · Generate<br/>facts with [S#] citations"]
     D --> E["4 · Verify<br/>one check per fact"]
@@ -33,7 +37,7 @@ flowchart LR
 ```
 
 1. **Identify:** a vision model names the subject and its category and writes an encyclopedia search
-   query. The user's location goes in as a hint.
+   query. The user's location goes in as a hint. If the user types a name, this step is skipped.
 2. **Retrieve:** the top English Wikipedia articles, plus the Japanese version of the best match found
    through Wikipedia's own language link, which is more precise than searching Japanese Wikipedia with
    English words. It takes 3 API requests per photo, which keeps it inside Wikipedia's rate limits. Each
@@ -86,6 +90,7 @@ Response shape:
 ```jsonc
 {
   "subject": {"name": "...", "category": "landmark", "search_query": "...", "confidence": "high"},
+                                       // or {"name": "...", "named_by_user": true} when a name was typed
   "facts":   [{"fact": "...", "sources": ["S1"], "supported": true}],
   "facts_checked": 5,   // facts written before verification; "facts" holds only those that passed
   "sources": [{"id": "S1", "title": "... (en)", "url": "https://en.wikipedia.org/wiki/..."}],
@@ -98,7 +103,7 @@ Response shape:
 ```python
 from visrag.pipeline import run
 
-result = run(open("photo.jpg", "rb").read(), location="Kyoto")
+result = run(open("photo.jpg", "rb").read(), location="Kyoto")   # or name="Kinkaku-ji" to skip identify
 for f in result["shown_facts"]:
     print(f["fact"], f["sources"])
 ```
@@ -135,9 +140,13 @@ docker run --env-file .env -p 8000:8000 visloc-rag
 script downloads each article's lead image from Wikipedia as the test photo.
 
 ```bash
-python eval/run_eval.py --limit 60 --out results/with_location.json
-python eval/run_eval.py --limit 60 --no-location --out results/no_location.json
+python eval/run_eval.py --out results/all.json                                 # all 58 landmarks
+python eval/run_eval.py --sample 30 --seed 0 --sleep 45 --out results/sample30.json   # fixed random 30
+python eval/run_eval.py --no-location --out results/no_location.json           # ablation
 ```
+
+On Groq's free tier the limit is 8,000 tokens per minute per model, and one photo uses about that much,
+so `--sleep 45` keeps a run inside it.
 
 ## Tests
 
@@ -186,6 +195,8 @@ Dockerfile         multi-stage, non-root image
 `v0.1.0` was the original single-notebook prototype ([view it](https://github.com/agrawaladitya270/VisLoc-RAG/tree/v0.1.0)).
 `v0.2.0` restructured it into a tested package and API, switched retrieval to the Wikipedia API, and
 added citations with per-fact verification.
+`v0.3.0` added the web page and the Name field, moved to models Groq still serves (with a checker from a
+different model family than the writer), and found Japanese articles through language links.
 
 ## License
 

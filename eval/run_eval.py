@@ -66,12 +66,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--landmarks", default=str(Path(__file__).with_name("landmarks.csv")))
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--sample", type=int, help="evaluate a fixed random subset of this size (see --seed)")
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-location", action="store_true", help="ablation: hide the location hint")
     ap.add_argument("--sleep", type=float, default=2.0, help="pause between images (rate limits)")
     ap.add_argument("--out", default="results/run.json")
     args = ap.parse_args()
 
-    rows = list(csv.DictReader(open(args.landmarks, encoding="utf-8")))[:args.limit]
+    rows = list(csv.DictReader(open(args.landmarks, encoding="utf-8")))
+    if args.sample:
+        rows = random.Random(args.seed).sample(rows, min(args.sample, len(rows)))
+    rows = rows[:args.limit]
     client, results = get_client(), []
     for i, row in enumerate(rows, 1):
         aliases = [a for a in row["aliases"].split("|") if a]

@@ -20,8 +20,10 @@ from urllib.parse import quote
 import requests
 from PIL import Image
 
-VISION_MODEL = os.getenv("VISRAG_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-TEXT_MODEL = os.getenv("VISRAG_TEXT_MODEL", "llama-3.3-70b-versatile")
+VISION_MODEL = os.getenv("VISRAG_VISION_MODEL", "qwen/qwen3.8-27b")
+TEXT_MODEL = os.getenv("VISRAG_TEXT_MODEL", "openai/gpt-oss-120b")
+# The checker is a different model family from the writer, so they are less likely to share mistakes.
+CHECK_MODEL = os.getenv("VISRAG_CHECK_MODEL", "qwen/qwen3.8-27b")
 HEADERS = {"User-Agent": "visloc-rag/0.2 (portfolio project; contact via GitHub)"}
 
 
@@ -55,7 +57,7 @@ def _chat(client, model: str, messages: list, usage: dict, **kw) -> str:
     if u:
         usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + (u.prompt_tokens or 0)
         usage["completion_tokens"] = usage.get("completion_tokens", 0) + (u.completion_tokens or 0)
-    return resp.choices[0].message.content
+    return resp.choices[0].message.content or ""
 
 
 IDENTIFY_PROMPT = """Identify the main subject of this photo.
@@ -126,7 +128,7 @@ def write_facts(client, subject: dict, sources: list[dict], location: str, usage
     src = "\n\n".join(f"[{s['id']}] {s['title']}: {s['text']}" for s in sources)
     reply = _chat(client, TEXT_MODEL, [{"role": "user", "content": FACTS_PROMPT.format(
         name=subject.get("name", ""), category=subject.get("category", ""),
-        location=location or "unknown", sources=src)}], usage, max_tokens=800, temperature=0.2)
+        location=location or "unknown", sources=src)}], usage, max_tokens=4000, temperature=0.2)
     facts = parse_json(reply)
     return [f for f in facts if isinstance(f, dict) and f.get("fact")][:5]
 
@@ -140,8 +142,9 @@ def check_facts(client, facts: list[dict], sources: list[dict], usage: dict) -> 
             f["supported"] = False
             continue
         evidence = "\n\n".join(s["text"] for s in cited)
-        reply = _chat(client, TEXT_MODEL, [{"role": "user", "content": CHECK_PROMPT.format(
-            evidence=evidence, fact=f["fact"])}], usage, max_tokens=5, temperature=0)
+        # room for reasoning models, which think before answering
+        reply = _chat(client, CHECK_MODEL, [{"role": "user", "content": CHECK_PROMPT.format(
+            evidence=evidence, fact=f["fact"])}], usage, max_tokens=400, temperature=0)
         f["supported"] = reply.strip().lower().startswith("yes")
     return facts
 

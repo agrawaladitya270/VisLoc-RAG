@@ -1,10 +1,22 @@
-"""HTTP API.  Run:  uvicorn visrag.api:app --port 8000   (needs GROQ_API_KEY)"""
+"""HTTP API.  Run:  uvicorn visrag.api:app --port 8000 --env-file .env   (needs GROQ_API_KEY)"""
+import io
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
+from PIL import Image
 
 from . import __version__
-from .pipeline import run
+from .pipeline import get_client, run
 
-app = FastAPI(title="VisLoc-RAG", version=__version__)
+MAX_BYTES = 8 * 1024 * 1024
+
+app = FastAPI(title="VisLoc-RAG", version=__version__,
+              description="Photo in, cited and fact-checked facts out.")
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/docs")
 
 
 @app.get("/health")
@@ -14,10 +26,18 @@ def health() -> dict:
 
 @app.post("/facts")
 def facts(file: UploadFile = File(...), location: str = Form("")) -> dict:
-    data = file.file.read(8 * 1024 * 1024 + 1)
-    if len(data) > 8 * 1024 * 1024:
+    data = file.file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
         raise HTTPException(413, "Image larger than 8 MB")
-    result = run(data, location)
+    try:
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        raise HTTPException(400, "Not a readable image") from None
+    try:
+        client = get_client()
+    except RuntimeError as e:
+        raise HTTPException(503, str(e)) from None
+    result = run(data, location, client=client)
     return {"subject": result["subject"], "facts": result["shown_facts"],
             "sources": [{k: s[k] for k in ("id", "title", "url")} for s in result["sources"]],
             "timing": result["timing"]}

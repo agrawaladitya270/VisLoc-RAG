@@ -63,6 +63,13 @@
       </div>
     </div>
     <div class="field">
+      <label for="name">Name</label>
+      <div>
+        <input type="text" id="name" placeholder="e.g. Kaminarimon" autocomplete="off">
+        <div class="note">Optional. If you know what it is, or the app got it wrong, type its name to skip automatic identification.</div>
+      </div>
+    </div>
+    <div class="field">
       <span></span>
       <div>
         <button id="submit" disabled>Get facts</button>
@@ -74,10 +81,11 @@
 
   <section id="result" hidden aria-live="polite">
     <hr>
-    <h2 id="name"></h2>
+    <h2 id="title"></h2>
     <p class="meta" id="meta"></p>
     <ol id="facts"></ol>
-    <p id="empty" hidden>No facts could be verified from the sources found.</p>
+    <p id="empty" hidden></p>
+    <p class="note" id="retry" hidden>Not what the photo shows? Type the correct name in the Name field and run it again.</p>
     <h3>Sources</h3>
     <ul class="sources" id="sources"></ul>
     <p class="timing" id="timing"></p>
@@ -129,6 +137,7 @@
     const body = new FormData();
     body.append("file", file);
     body.append("location", $("location").value.trim());
+    body.append("name", $("name").value.trim());
     $("submit").disabled = true;
     $("status").hidden = false;
     $("result").hidden = true;
@@ -152,8 +161,9 @@
     const sources = d.sources || [];
     const byId = Object.fromEntries(sources.map((x) => [x.id, x]));
 
-    $("name").textContent = s.name || "Unknown subject";
-    const meta = [s.category, s.confidence && `${s.confidence} confidence`].filter(Boolean);
+    $("title").textContent = s.name || "Unknown subject";
+    const meta = s.named_by_user ? ["name given by you"]
+      : [s.category, s.confidence && `${s.confidence} confidence`].filter(Boolean);
     if (d.facts_checked) meta.push(`${facts.length} of ${d.facts_checked} facts passed the source check`);
     $("meta").textContent = meta.join(" · ");
 
@@ -165,7 +175,11 @@
       return li;
     }));
     $("facts").hidden = !facts.length;
+    $("empty").textContent = sources.length
+      ? `No facts could be verified: the Wikipedia articles found are not about “${s.name}”.`
+      : `No Wikipedia articles were found for “${s.name}”.`;
     $("empty").hidden = facts.length > 0;
+    $("retry").hidden = Boolean(s.named_by_user) && facts.length > 0;
 
     $("sources").replaceChildren(...sources.map((x) => {
       const li = el("li");

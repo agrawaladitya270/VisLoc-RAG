@@ -41,10 +41,19 @@ def test_missing_key_is_503(monkeypatch):
     assert r.status_code == 503 and "GROQ_API_KEY" in r.json()["detail"]
 
 
+def test_wikipedia_rate_limit_is_503(monkeypatch):
+    def busy(*a, **kw):
+        raise api.WikipediaBusy("Wikipedia is limiting requests right now. Try again in 20 seconds.")
+    monkeypatch.setattr(api, "get_client", lambda: object())
+    monkeypatch.setattr(api, "run", busy)
+    r = client.post("/facts", files={"file": ("x.jpg", _jpeg(), "image/jpeg")})
+    assert r.status_code == 503 and "20 seconds" in r.json()["detail"]
+
+
 def test_returns_only_supported_facts_without_source_text(monkeypatch):
     shown = [{"fact": "Built in 1609.", "sources": ["S1"], "supported": True}]
     monkeypatch.setattr(api, "get_client", lambda: object())
-    monkeypatch.setattr(api, "run", lambda data, location, client: {
+    monkeypatch.setattr(api, "run", lambda data, location, client, name: {
         "subject": {"name": "Himeji Castle"},
         "facts": shown + [{"fact": "It is gold.", "sources": ["S1"], "supported": False}],
         "shown_facts": shown,

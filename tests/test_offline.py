@@ -3,10 +3,12 @@ import io
 import json
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image
 
+import visrag.pipeline as pipeline
 from eval.run_eval import matches
-from visrag.pipeline import parse_json, run
+from visrag.pipeline import parse_json, run, wikipedia_sources
 
 
 class FakeClient:
@@ -56,6 +58,54 @@ def test_pipeline_marks_unsupported_and_uncited_facts():
     assert [f["supported"] for f in out["facts"]] == [True, False, False]
     assert len(out["shown_facts"]) == 1
     assert out["usage"]["prompt_tokens"] == 400
+
+
+def test_user_given_name_skips_vision_step():
+    client = FakeClient([json.dumps([{"fact": "Built in 1989.", "sources": ["S1"]}]), "yes"])
+    sources = [{"id": "S1", "title": "Asahi Beer Hall (en)", "url": "", "text": "Completed in 1989."}]
+    queries = []
+    out = run(_jpeg(), "", client=client, search=lambda q: queries.append(q) or sources,
+              name="Asahi Beer Hall")
+    assert queries == ["Asahi Beer Hall"] and out["subject"]["named_by_user"]
+    assert len(out["shown_facts"]) == 1 and client.replies == []
+
+
+def _fake_wiki(calls, ja_link=True):
+    def wiki(lang, **params):
+        calls.append((lang, params.get("gsrsearch") or params.get("titles"),
+                      "lead" if "exintro" in params else "full"))
+        if lang == "en":
+            page = {"title": "Himeji Castle", "index": 1, "extract": "Text.", "fullurl": "https://x"}
+            if ja_link:
+                page["langlinks"] = [{"lang": "ja", "title": "姫路城"}]
+            return {"pages": [page]}
+        return {"pages": [{"title": "姫路城", "extract": "本文。", "fullurl": "https://y"}]}
+    return wiki
+
+
+def test_japanese_article_comes_from_language_link(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "_wiki", _fake_wiki(calls))
+    sources = wikipedia_sources("Himeji Castle")
+    assert [s["title"] for s in sources] == ["Himeji Castle (en)", "姫路城 (ja)"]
+    # search, then full text of the best match and of its Japanese version; no English query on ja
+    assert calls == [("en", "Himeji Castle", "lead"), ("en", "Himeji Castle", "full"),
+                     ("ja", "姫路城", "full")]
+
+
+def test_japanese_search_is_fallback_without_language_link(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "_wiki", _fake_wiki(calls, ja_link=False))
+    sources = wikipedia_sources("Himeji Castle")
+    assert [s["title"] for s in sources] == ["Himeji Castle (en)", "姫路城 (ja)"]
+    assert calls[-1] == ("ja", "Himeji Castle", "lead")
+
+
+def test_rate_limit_is_reported_not_treated_as_no_results(monkeypatch):
+    busy = SimpleNamespace(status_code=429, headers={"retry-after": "20"})
+    monkeypatch.setattr(pipeline.requests, "get", lambda *a, **kw: busy)
+    with pytest.raises(pipeline.WikipediaBusy, match="20 seconds"):
+        wikipedia_sources("Himeji Castle")
 
 
 def test_no_sources_means_no_facts():

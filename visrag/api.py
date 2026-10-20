@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from PIL import Image
 
 from . import __version__
-from .pipeline import get_client, run
+from .pipeline import WikipediaBusy, get_client, run
 
 MAX_BYTES = 8 * 1024 * 1024
 UI_PAGE = Path(__file__).parent / "static" / "index.html"
@@ -27,7 +27,7 @@ def health() -> dict:
 
 
 @app.post("/facts")
-def facts(file: UploadFile = File(...), location: str = Form("")) -> dict:
+def facts(file: UploadFile = File(...), location: str = Form(""), name: str = Form("")) -> dict:
     data = file.file.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
         raise HTTPException(413, "Image larger than 8 MB")
@@ -39,7 +39,10 @@ def facts(file: UploadFile = File(...), location: str = Form("")) -> dict:
         client = get_client()
     except RuntimeError as e:
         raise HTTPException(503, str(e)) from None
-    result = run(data, location, client=client)
+    try:
+        result = run(data, location, client=client, name=name.strip())
+    except WikipediaBusy as e:
+        raise HTTPException(503, str(e)) from None
     return {"subject": result["subject"], "facts": result["shown_facts"],
             "facts_checked": len(result["facts"]),
             "sources": [{k: s[k] for k in ("id", "title", "url")} for s in result["sources"]],

@@ -15,16 +15,15 @@ import json
 import os
 import re
 import time
-from urllib.parse import quote
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 VISION_MODEL = os.getenv("VISRAG_VISION_MODEL", "qwen/qwen3.8-27b")
 TEXT_MODEL = os.getenv("VISRAG_TEXT_MODEL", "openai/gpt-oss-120b")
 # The checker is a different model family from the writer, so they are less likely to share mistakes.
 CHECK_MODEL = os.getenv("VISRAG_CHECK_MODEL", "qwen/qwen3.8-27b")
-HEADERS = {"User-Agent": "visloc-rag/0.2 (portfolio project; contact via GitHub)"}
+HEADERS = {"User-Agent": "visloc-rag/0.2 (https://github.com/agrawaladitya270/VisLoc-RAG)"}
 
 
 def get_client():
@@ -44,7 +43,7 @@ def parse_json(text: str):
 
 
 def image_to_data_url(image_bytes: bytes, max_side: int = 1024) -> str:
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB")  # phone rotation
     img.thumbnail((max_side, max_side))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=88)
@@ -78,27 +77,60 @@ def identify(client, image_bytes: bytes, location: str, usage: dict) -> dict:
     return parse_json(reply)
 
 
-def wikipedia_sources(query: str, langs=("en", "ja"), per_lang: int = 2) -> list[dict]:
-    """Top Wikipedia articles for the query, as numbered sources with their summary text."""
+class WikipediaBusy(RuntimeError):
+    """Wikipedia answered HTTP 429: too many requests."""
+
+
+def _wiki(lang: str, **params) -> dict:
+    r = requests.get(f"https://{lang}.wikipedia.org/w/api.php", headers=HEADERS, timeout=10,
+                     params={"action": "query", "format": "json", "formatversion": 2, **params})
+    if r.status_code == 429:
+        raise WikipediaBusy("Wikipedia is limiting requests right now. Try again in "
+                            f"{r.headers.get('retry-after', 'a few')} seconds.")
+    r.raise_for_status()
+    return r.json()["query"]
+
+
+def _pages(lang: str, full_text: bool = False, **params) -> list[dict]:
+    """Pages with plain text, URL and Japanese language link, in search-rank order.
+
+    Without `full_text` only the lead section is returned; the API gives full text for one page per request.
+    """
+    intro = {} if full_text else {"exintro": 1}   # MediaWiki treats any value, even 0, as true
+    try:
+        query = _wiki(lang, prop="extracts|info|langlinks", explaintext=1, inprop="url", lllang="ja",
+                      redirects=1, **intro, **params)
+    except (requests.RequestException, KeyError, ValueError):
+        return []
+    return sorted(query.get("pages", []), key=lambda p: p.get("index", 0))
+
+
+def wikipedia_sources(query: str, per_lang: int = 2, max_chars: int = 3000) -> list[dict]:
+    """Top English articles for the query plus the Japanese version of the best one, as numbered sources.
+
+    The Japanese article is found through Wikipedia's language link, which is more precise than
+    searching Japanese Wikipedia with an English query; that search is only the fallback.
+    Three API requests: an English search (lead sections and language links), then the full text of
+    the best English match and of its Japanese version. Few requests keeps us inside rate limits.
+    """
     sources = []
-    for lang in langs:
-        try:
-            r = requests.get(f"https://{lang}.wikipedia.org/w/api.php", headers=HEADERS, timeout=10,
-                             params={"action": "query", "list": "search", "srsearch": query,
-                                     "srlimit": per_lang, "format": "json"})
-            titles = [h["title"] for h in r.json()["query"]["search"]]
-        except (requests.RequestException, KeyError, ValueError):
-            continue
-        for title in titles:
-            try:
-                s = requests.get(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/"
-                                 + quote(title.replace(" ", "_")), headers=HEADERS, timeout=10).json()
-            except (requests.RequestException, ValueError):
-                continue
-            if s.get("extract"):
-                sources.append({"id": f"S{len(sources) + 1}", "title": f"{title} ({lang})",
-                                "url": s.get("content_urls", {}).get("desktop", {}).get("page", ""),
-                                "text": s["extract"][:1500]})
+
+    def add(lang: str, pages: list[dict]) -> None:
+        for page in pages:
+            text = (page.get("extract") or "").strip()
+            if text:
+                sources.append({"id": f"S{len(sources) + 1}", "title": f"{page['title']} ({lang})",
+                                "url": page.get("fullurl", ""), "text": text[:max_chars]})
+
+    en = _pages("en", generator="search", gsrsearch=query, gsrlimit=per_lang)
+    if en:
+        en[0] = (_pages("en", full_text=True, titles=en[0]["title"]) or en)[0]
+    add("en", en)
+    ja_title = next((link["title"] for page in en[:1] for link in page.get("langlinks", [])), None)
+    if ja_title:
+        add("ja", _pages("ja", full_text=True, titles=ja_title))
+    else:
+        add("ja", _pages("ja", generator="search", gsrsearch=query, gsrlimit=1))
     return sources
 
 
@@ -149,12 +181,17 @@ def check_facts(client, facts: list[dict], sources: list[dict], usage: dict) -> 
     return facts
 
 
-def run(image_bytes: bytes, location: str = "", client=None, search=wikipedia_sources) -> dict:
+def run(image_bytes: bytes, location: str = "", client=None, search=wikipedia_sources,
+        name: str = "") -> dict:
+    """With `name`, the user has said what the photo shows, so the vision step is skipped."""
     client = client or get_client()
     usage: dict = {}
     t = {}
     t0 = time.perf_counter()
-    subject = identify(client, image_bytes, location, usage)
+    if name:
+        subject = {"name": name, "search_query": name, "named_by_user": True}
+    else:
+        subject = identify(client, image_bytes, location, usage)
     t["identify_s"] = time.perf_counter() - t0
     t1 = time.perf_counter()
     sources = search(subject.get("search_query") or subject.get("name", ""))

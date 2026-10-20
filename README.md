@@ -34,9 +34,11 @@ flowchart LR
 
 1. **Identify:** a vision model names the subject and its category and writes an encyclopedia search
    query. The user's location goes in as a hint.
-2. **Retrieve:** Wikipedia search and summary APIs, in English and Japanese. Each article becomes a
-   numbered source (`S1`, `S2`, …). Japanese text goes to the model as-is, with no lossy round-trip
-   translation.
+2. **Retrieve:** the top English Wikipedia articles, plus the Japanese version of the best match found
+   through Wikipedia's own language link, which is more precise than searching Japanese Wikipedia with
+   English words. It takes 3 API requests per photo, which keeps it inside Wikipedia's rate limits. Each
+   article becomes a numbered source (`S1`, `S2`, …). Japanese text goes to the model as-is, with no
+   lossy round-trip translation.
 3. **Generate:** a text model writes up to 5 specific facts using *only* those sources. Each fact lists
    the source ids that support it. If the sources are about something else, it returns no facts.
 4. **Verify:** a separate call per fact asks whether the claim is supported by the sources it cites.
@@ -71,10 +73,12 @@ uvicorn visrag.api:app --port 8000 --env-file .env
 ```
 
 Open <http://localhost:8000> for the web page: choose a photo, optionally add your location, and get
-the verified facts with links to their sources. API docs are at `/docs`. Or call the API directly:
+the verified facts with links to their sources. If the photo is identified wrongly, type the correct
+name in the Name field and run it again. API docs are at `/docs`. Or call the API directly:
 
 ```bash
 curl -F "file=@photo.jpg" -F "location=Kyoto" http://localhost:8000/facts
+curl -F "file=@photo.jpg" -F "name=Asahi Beer Hall" http://localhost:8000/facts   # skip identification
 ```
 
 Response shape:
@@ -143,8 +147,10 @@ ruff check . && pytest -q
 ```
 
 The tests need no network or API key. A fake model client checks that uncited or unsupported facts are
-hidden, that model JSON is parsed safely, and that name matching handles aliases and accents. API tests
-cover upload validation, the missing-key error, and that source text never leaks into responses.
+hidden, that model JSON is parsed safely, and that name matching handles aliases and accents. Retrieval
+tests check that the Japanese article comes from the language link and that a Wikipedia rate limit is
+reported as such, not as "no results". API tests cover upload validation, the missing-key and
+rate-limit errors, and that source text never leaks into responses.
 
 ## Project structure
 
@@ -166,8 +172,10 @@ Dockerfile         multi-stage, non-root image
 - **The verifier is an LLM too.** It uses a different model family from the writer to reduce shared
   mistakes, but it can still be wrong, which is why the evaluation measures its agreement with human
   labels. Next step: compare against an NLI model as the verifier.
-- **Japanese search uses the English query**, so it sometimes returns related but off-target articles.
-  Next step: follow the English article's language link to its Japanese counterpart.
+- **The vision model does not know every landmark.** On a photo of the Asahi Beer Hall in Tokyo it
+  answered "Golden Teapot", and it stayed wrong when given the location or a list of nearby Wikipedia
+  places. When this happens, typing the name in the Name field skips identification. Next step: a
+  stronger vision model behind the same interface.
 - **Wikipedia lead images are well-known photos**, which makes the benchmark easier than real phone
   photos. Next step: add a set of personal photos with known answers.
 - **Coverage is limited to Wikipedia.** Subjects without an article return no facts. This is by design:

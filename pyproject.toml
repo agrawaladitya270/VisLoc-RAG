@@ -1,7 +1,14 @@
 [project]
 name = "visloc-rag"
 version = "0.2.0"
+description = "Photo in, cited and fact-checked facts out: vision LLM + English/Japanese Wikipedia RAG with per-claim verification."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Aditya Agrawal" }]
 requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/agrawaladitya270/VisLoc-RAG"
 
 [tool.ruff]
 line-length = 110

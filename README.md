@@ -148,6 +148,25 @@ python eval/run_eval.py --no-location --out results/no_location.json           #
 On Groq's free tier the limit is 8,000 tokens per minute per model, and one photo uses about that much,
 so `--sleep 45` keeps a run inside it.
 
+### Preliminary results
+
+A first run of the 30-landmark sample stopped after 9 photos, when the Qwen model reached Groq's free-tier
+limit of 200,000 tokens per day (shared with that day's manual testing). The 21 photos that failed with
+HTTP 429 are excluded.
+
+| Metric (9 landmarks, location hint on) | Result |
+|---|---|
+| Identified correctly | 8 of 9 (89%); Kōfuku-ji was named as Tōdai-ji |
+| Facts written per photo | 5.0 |
+| Facts that passed the check | 37 of 45 (82%) |
+| Photos with at least one rejected fact | 5 of 9 |
+| Median time per photo | 40 s: identify 1.5 s, retrieve 4.9 s, write 3.2 s, check 30.5 s |
+| Tokens per photo | about 14,800 |
+
+Checking dominates time and tokens. Each check sends its cited sources in full, and on the free tier the
+calls queue behind the per-minute limit; single runs without that queueing take 8 to 12 s. Next: send the
+checker only the cited passage, then finish the run and the hand-labelled agreement check.
+
 ## Tests
 
 ```bash
@@ -196,7 +215,8 @@ Dockerfile         multi-stage, non-root image
 `v0.2.0` restructured it into a tested package and API, switched retrieval to the Wikipedia API, and
 added citations with per-fact verification.
 `v0.3.0` added the web page and the Name field, moved to models Groq still serves (with a checker from a
-different model family than the writer), and found Japanese articles through language links.
+different model family than the writer), found Japanese articles through language links, and ran a first
+evaluation (9 landmarks).
 
 ## License
 

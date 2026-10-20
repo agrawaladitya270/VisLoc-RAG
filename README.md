@@ -1,70 +1,174 @@
-# VisLoc-RAG — photo in, cited and fact-checked facts out
+# VisLoc-RAG
 
-Take a photo of a landmark, building, dish or object. The app identifies it with a vision model,
-pulls evidence from Wikipedia (English and Japanese), writes up to 5 facts that **cite their
-sources**, and then **checks each fact** against the sources it cites. Only supported facts are shown.
+**Photo in → cited, fact-checked facts out.**
 
-```
-photo ─► vision LLM: what is it? ─► Wikipedia en + ja (numbered sources) ─► LLM: facts with [S#] citations
-      ─► per-fact check: "is this claim supported by its sources?" ─► show supported facts + sources
-```
+[![CI](https://github.com/agrawaladitya270/VisLoc-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/agrawaladitya270/VisLoc-RAG/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)
+![Docker](https://img.shields.io/badge/deploy-Docker-2496ED)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## What changed from the first notebook version
-- **Security:** the API key was hard-coded in the notebook. It is now read from `GROQ_API_KEY`.
-  (If an old notebook with a key was ever pushed, revoke that key and clean the git history.)
-- **Crash fix:** the facts step used a variable that was never defined (`image_location`).
-- **Real grounding:** facts must cite source ids; a separate check marks each fact supported or not.
-  Previously the prompt only *asked* the model to use the search text, and nothing verified it.
-- **Better evidence:** Wikipedia's API instead of scraping search-result snippets; Japanese text is
-  given to the model directly instead of being machine-translated twice.
-- **Engineering:** timeouts and retries, low temperature for factual output, token counting,
-  per-stage timing, FastAPI endpoint, Docker image, CI with offline tests (fake model client).
+Take a photo of a landmark, building, dish or object. VisLoc-RAG identifies it with a vision LLM,
+retrieves evidence from **English and Japanese Wikipedia**, writes up to five facts that **cite their
+sources**, and then **verifies each fact** against the sources it cites. Only verified facts are returned,
+each with a link to where it came from.
 
-## Results
+**Stack:** Python · Groq (Llama 4 Scout vision, Llama 3.3 70B) · Wikipedia API · FastAPI · Docker ·
+GitHub Actions · pytest · ruff
 
-Run the evaluation below and fill in this table. **Do not quote numbers you have not run.**
+## How it works
 
-| Setting | Images | Identified correctly | Facts per image | Facts supported (checker) | Checker agrees with you (30 hand-labeled) | p50 time |
-|---|---|---|---|---|---|---|
-| With location hint | | | | | | |
-| Without location hint | | | | | | |
-
-## Run the evaluation (Colab)
-
-```python
-!git clone https://github.com/<your-user>/VisLoc-RAG
-%cd VisLoc-RAG
-!pip install -q -r requirements.txt
-
-import os
-from google.colab import userdata                        # store the key in Colab "Secrets"
-os.environ["GROQ_API_KEY"] = userdata.get("GROQ_API_KEY")
-
-!python eval/run_eval.py --limit 60 --out results/with_location.json
-!python eval/run_eval.py --limit 60 --no-location --out results/no_location.json
+```mermaid
+flowchart LR
+    A["Photo + optional<br/>location hint"] --> B["1 · Identify<br/>vision LLM"]
+    B --> C["2 · Retrieve<br/>Wikipedia en + ja<br/>numbered sources"]
+    C --> D["3 · Generate<br/>facts with [S#] citations"]
+    D --> E["4 · Verify<br/>one check per fact"]
+    E --> F["Supported facts<br/>+ source links"]
 ```
 
-- `eval/landmarks.csv` holds 58 landmarks (33 in Japan) with aliases. The script downloads each
-  article's lead image from Wikipedia, runs the pipeline and scores it.
-- Each run also writes `*.manual_check.csv` with 30 random facts and their evidence. Fill in the
-  `your_label` column (yes/no), then count how often the automatic checker agrees with you. That
-  agreement number is what makes the "supported" rate believable.
-- Each image makes up to 7 model calls. If you hit rate limits, raise `--sleep`.
-- Wikipedia lead images are well-known photos, so this is an easier test than random phone photos.
-  Add 20 of your own photos (with the right answer) for a harder, more honest check.
+1. **Identify:** a vision model names the subject and its category and writes an encyclopedia search
+   query. The user's location goes in as a hint.
+2. **Retrieve:** Wikipedia search and summary APIs, in English and Japanese. Each article becomes a
+   numbered source (`S1`, `S2`, …). Japanese text goes to the model as-is, with no lossy round-trip
+   translation.
+3. **Generate:** a text model writes up to 5 specific facts using *only* those sources. Each fact lists
+   the source ids that support it. If the sources are about something else, it returns no facts.
+4. **Verify:** a separate call per fact asks whether the claim is supported by the sources it cites.
+   A fact with no valid citation fails automatically. Only supported facts are shown.
 
-## Run the app
+## Design decisions
+
+- **Grounding is checked, not just requested.** Telling a model to "use the sources" does not make it
+  do so. Requiring citations and checking each claim on its own makes unsupported facts detectable and
+  filterable.
+- **Structured evidence instead of scraping.** The Wikipedia API returns clean text with stable URLs,
+  so every fact shown links back to its evidence.
+- **Multilingual retrieval.** Japanese landmarks often have more detailed Japanese articles. The model
+  reads them directly.
+- **Built to be measured.** Every run records per-stage latency and token usage. An evaluation harness
+  measures identification accuracy, verified-fact rate, and how often the verifier agrees with human
+  labels.
+- **Production basics.** Keys come only from the environment. Network calls have timeouts and
+  retries. Uploads are size-limited and validated, with clear 400/413/503 errors. The image is a slim,
+  multi-stage, non-root Docker build. CI runs lint, offline tests on 3 Python versions, and a Docker
+  build.
+
+## Quickstart
 
 ```bash
+git clone https://github.com/agrawaladitya270/VisLoc-RAG.git
+cd VisLoc-RAG
 pip install -r requirements.txt
-export GROQ_API_KEY=...                      # never commit keys; see .env.example
-uvicorn visrag.api:app --port 8000
-curl -F "file=@photo.jpg" -F "location=Kobe" localhost:8000/facts
+cp .env.example .env          # then put your Groq key in .env (free at console.groq.com); never commit it
+uvicorn visrag.api:app --port 8000 --env-file .env
+```
 
-docker build -t visloc-rag . && docker run -e GROQ_API_KEY=$GROQ_API_KEY -p 8000:8000 visloc-rag
+Open <http://localhost:8000> for the interactive API docs (you can upload a photo there), or:
+
+```bash
+curl -F "file=@photo.jpg" -F "location=Kyoto" http://localhost:8000/facts
+```
+
+Response shape:
+
+```jsonc
+{
+  "subject": {"name": "...", "category": "landmark", "search_query": "...", "confidence": "high"},
+  "facts":   [{"fact": "...", "sources": ["S1"], "supported": true}],
+  "sources": [{"id": "S1", "title": "... (en)", "url": "https://en.wikipedia.org/wiki/..."}],
+  "timing":  {"identify_s": ..., "search_s": ..., "facts_s": ..., "check_s": ..., "total_s": ...}
+}
+```
+
+**From Python**
+
+```python
+from visrag.pipeline import run
+
+result = run(open("photo.jpg", "rb").read(), location="Kyoto")
+for f in result["shown_facts"]:
+    print(f["fact"], f["sources"])
+```
+
+**With Docker**
+
+```bash
+docker build -t visloc-rag .
+docker run --env-file .env -p 8000:8000 visloc-rag
+```
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | (required) | Groq API key |
+| `VISRAG_VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | identification model |
+| `VISRAG_TEXT_MODEL` | `llama-3.3-70b-versatile` | fact writing and verification model |
+
+## Evaluation
+
+`eval/run_eval.py` runs the full pipeline on a labeled landmark set and reports:
+
+- **Identification accuracy**: the predicted name matches the title or an alias. Matching ignores
+  accents and case and accepts Japanese names, so *Tōdai-ji* = *Todai-ji temple* and *Kinkaku-ji* =
+  *金閣寺*.
+- **Facts per image** and **verified-fact rate**
+- **Images with at least one unsupported fact**
+- **p50 / p95 latency** and **tokens per image**
+- **Ablation:** with and without the location hint (`--no-location`)
+- **Human check:** 30 random facts and their evidence are exported to CSV for hand labeling, to measure
+  how often the automatic verifier agrees with a person
+
+`eval/landmarks.csv` has 58 landmarks (33 in Japan, 25 worldwide) with aliases and locations. The
+script downloads each article's lead image from Wikipedia as the test photo.
+
+```bash
+python eval/run_eval.py --limit 60 --out results/with_location.json
+python eval/run_eval.py --limit 60 --no-location --out results/no_location.json
 ```
 
 ## Tests
 
-`pytest -q` runs offline: a fake model client checks that uncited or unsupported facts are hidden,
-that JSON replies are parsed safely, and that name matching works with aliases and accents.
+```bash
+pip install -r requirements-dev.txt
+ruff check . && pytest -q
+```
+
+The tests need no network or API key. A fake model client checks that uncited or unsupported facts are
+hidden, that model JSON is parsed safely, and that name matching handles aliases and accents. API tests
+cover upload validation, the missing-key error, and that source text never leaks into responses.
+
+## Project structure
+
+```
+visrag/
+  pipeline.py      identify → retrieve → generate → verify
+  api.py           FastAPI service: POST /facts, GET /health
+eval/
+  run_eval.py      evaluation harness and human-label export
+  landmarks.csv    58 labeled landmarks with aliases
+tests/             offline tests (fake LLM client, stubbed pipeline)
+Dockerfile         multi-stage, non-root image
+.github/workflows  CI: ruff + pytest on Python 3.10–3.13 + Docker build
+```
+
+## Limitations and next steps
+
+- **The verifier is an LLM too.** It can be wrong in the same ways as the generator, which is why the
+  evaluation measures its agreement with human labels. Next step: compare against an NLI model as the
+  verifier.
+- **Japanese search uses the English query**, so it sometimes returns related but off-target articles.
+  Next step: follow the English article's language link to its Japanese counterpart.
+- **Wikipedia lead images are well-known photos**, which makes the benchmark easier than real phone
+  photos. Next step: add a set of personal photos with known answers.
+- **Coverage is limited to Wikipedia.** Subjects without an article return no facts. This is by design:
+  no evidence means no claims.
+
+## History
+
+`v0.1.0` was the original single-notebook prototype ([view it](https://github.com/agrawaladitya270/VisLoc-RAG/tree/v0.1.0)).
+`v0.2.0` restructured it into a tested package and API, switched retrieval to the Wikipedia API, and
+added citations with per-fact verification.
+
+## License
+
+[MIT](LICENSE)

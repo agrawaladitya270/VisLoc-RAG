@@ -1,12 +1,11 @@
 """Photo -> identify the subject -> fetch evidence -> write cited facts -> check each fact.
 
-Changes from the original notebook:
-- API key read from the environment (it was hard-coded in the notebook).
-- Evidence comes from Wikipedia (English + Japanese) with source ids, instead of scraping search
-  result pages; Japanese text is passed to the model directly (no round-trip translation).
-- Facts must cite source ids, temperature is low, and a separate check marks each fact as
-  supported or not by its cited sources. Only supported facts are shown by default.
-- Timeouts, retries, token counting and per-stage timing for evaluation.
+- Evidence comes from Wikipedia (English + Japanese) as numbered sources; Japanese text is passed
+  to the model directly instead of being machine-translated.
+- Facts must cite source ids, temperature is low, and a separate call checks each fact against
+  the sources it cites. Only supported facts are shown by default.
+- The API key is read from the environment; network calls have timeouts and retries.
+- Every run records token usage and per-stage timing for evaluation.
 """
 from __future__ import annotations
 
